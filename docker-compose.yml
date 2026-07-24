@@ -1,0 +1,155 @@
+# ============================================================
+# 多Agent科研论文阅读系统 - Docker Compose
+# 启动: docker-compose up -d
+# 查看日志: docker-compose logs -f
+# 停止: docker-compose down
+# ============================================================
+
+services:
+  # ========== PostgreSQL 16 + pgvector ==========
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: paper_reader_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-paper_reader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-paper_reader_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-paper_reader_db}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - paper_reader_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paper_reader}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ========== Redis 7 ==========
+  redis:
+    image: redis:7-alpine
+    container_name: paper_reader_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - paper_reader_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ========== FastAPI Web 服务 ==========
+  web:
+    build: .
+    container_name: paper_reader_web
+    command: >
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      - LLM_API_KEY=${DASHSCOPE_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-paper_reader}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-paper_reader_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-paper_reader_db}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - PDF_STORAGE_DIR=/app/data/pdfs
+      - PARSED_STORAGE_DIR=/app/data/parsed
+      - LLM_MODEL_CANDIDATES=${LLM_MODEL_CANDIDATES:-qwen-turbo}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v2}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+    ports:
+      - "${APP_PORT:-8002}:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - paper_reader_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ========== Celery Worker ==========
+  celery_worker:
+    build: .
+    container_name: paper_reader_celery
+    command: >
+      celery -A app.tasks.celery_app worker
+      --loglevel=${LOG_LEVEL:-INFO}
+      --concurrency=2
+      --max-tasks-per-child=10
+    environment:
+      - LLM_API_KEY=${DASHSCOPE_API_KEY}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-paper_reader}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-paper_reader_pass}
+      - POSTGRES_DB=${POSTGRES_DB:-paper_reader_db}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DIR=/app/logs
+      - PDF_STORAGE_DIR=/app/data/pdfs
+      - PARSED_STORAGE_DIR=/app/data/parsed
+      - LLM_MODEL_CANDIDATES=${LLM_MODEL_CANDIDATES:-qwen-turbo}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-v2}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - paper_reader_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ========== Streamlit 前端 ==========
+  streamlit:
+    build: .
+    container_name: paper_reader_streamlit
+    command: >
+      streamlit run frontend/app.py
+      --server.address 0.0.0.0
+      --server.port 8501
+      --server.headless true
+      --browser.gatherUsageStats false
+    environment:
+      - API_BASE_URL=http://web:8000
+    ports:
+      - "8501:8501"
+    networks:
+      - paper_reader_net
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  paper_reader_net:
+    driver: bridge
+
+volumes:
+  postgres_data:

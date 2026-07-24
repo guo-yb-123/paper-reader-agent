@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+!.env.example
+
+# Logs
+logs/*.log
+logs/*.gz
+
+# Data (runtime)
+data/pdfs/*
+data/parsed/*
+!data/pdfs/.gitkeep
+!data/parsed/.gitkeep
+
+# Docker
+.docker/
+
+# Test
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Celery
+celerybeat-schedule
